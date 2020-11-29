@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F 
+from resnet import MetaModule
 
-
-class NCF(nn.Module):
+class NCF(MetaModule):
 	def __init__(self, user_num, item_num, factor_num, num_layers,
 					dropout, model, GMF_model=None, MLP_model=None):
 		super(NCF, self).__init__()
