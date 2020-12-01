@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F 
-
+# import torch.nn.functional as F
+# from resnet import MetaModule
 
 class NCF(nn.Module):
 	def __init__(self, user_num, item_num, factor_num, num_layers,
@@ -108,5 +108,18 @@ class NCF(nn.Module):
 		else:
 			concat = torch.cat((output_GMF, output_MLP), -1)
 
-		prediction = self.predict_layer(concat)
+		prediction = torch.sigmoid(self.predict_layer(concat))
 		return prediction.view(-1)
+
+class Gamma(nn.Module):
+	def __init__(self, user_num, item_num, K0):
+		super(Gamma, self).__init__()
+		self.user_embedding = nn.Embedding(user_num, K0)
+		self.item_embedding = nn.Embedding(item_num, K0)
+	def forward(self, user, item):
+		# user: batch_size
+		# item: batch_size
+		user_embedding = self.user_embedding(user)
+		item_embedding = self.item_embedding(item)
+		# return torch.sigmoid(torch.diag(torch.mm(user_embedding, item_embedding.transpose(0,1))))
+		return torch.sigmoid(torch.bmm(user_embedding.unsqueeze(1), item_embedding.unsqueeze(1).transpose(1,2))).reshape(-1)

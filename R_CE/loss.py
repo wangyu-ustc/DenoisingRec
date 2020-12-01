@@ -7,7 +7,7 @@ import numpy as np
 
 def loss_function(y, t, alpha):
 
-    loss = F.binary_cross_entropy_with_logits(y, t, reduce = False)
+    loss = F.binary_cross_entropy(y, t, reduce = False)
     y_ = torch.sigmoid(y).detach()
     weight = torch.pow(y_, alpha) * t + torch.pow((1-y_), alpha) * (1-t)
     loss_ = loss * weight
