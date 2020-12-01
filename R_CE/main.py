@@ -219,9 +219,8 @@ train_loader.dataset.ng_sample()
 valid_loader.dataset.ng_sample()
 if args.use_VAE:
     # pretrain model
-    count = 0
     print("pretrain model...")
-    for epoch in range(10):
+    for epoch in range(args.pretrain_epochs):
         model.train()
         for user, item, label, noisy_or_not in train_loader:
             user = user.to(args.device)
@@ -244,18 +243,9 @@ if args.use_VAE:
 
             loss.backward()
             optimizer.step()
-            count += 1
-            if count % 200 == 0 and count != 0:
-                print("epoch: {}, iter: {}, loss:{}".format(epoch, count, loss))
-
-            if count % args.eval_freq == 0 and count != 0:
-                test(model, test_data_pos, user_pos)
-                best_loss = eval(model, valid_loader, best_loss, count)
-                model.train()
-
     best_loss = eval(model, valid_loader, best_loss, count)
     test(model, test_data_pos, user_pos)
-    print("pretrain model, done")
+
 
 for epoch in range(args.epochs):
     model.train()  # Enable dropout (if have).
