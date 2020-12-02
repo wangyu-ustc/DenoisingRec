@@ -11,6 +11,7 @@ def load_all(dataset, data_path):
 	train_rating = data_path + '{}.train.rating'.format(dataset)
 	valid_rating = data_path + '{}.valid.rating'.format(dataset)
 	test_negative = data_path + '{}.test.negative'.format(dataset)
+	test_noisy = data_path + '{}.test.noisy'.format(dataset)
 
 	################# load training data #################	
 	train_data = pd.read_csv(
@@ -81,8 +82,21 @@ def load_all(dataset, data_path):
 			test_mat[u, i] = 1.0
 			line = fd.readline()
 
+	test_data_noisy = {}
+	with open(test_noisy, 'r') as fd:
+		line = fd.readline()
+		while line != None and line != '':
+			arr = line.split('\t')
+			u = int(arr[0])
+			i = int(arr[1])
+			if u in test_data_noisy:
+				test_data_noisy[u].append(i)
+			else:
+				test_data_noisy[u] = [i]
+			test_mat[u, i] = 1.0
+			line = fd.readline()
 
-	return train_data_list, valid_data_list, test_data_pos, user_pos, user_num, item_num, train_mat, train_data_noisy
+	return train_data_list, valid_data_list, test_data_pos, test_data_noisy, user_pos, user_num, item_num, train_mat, train_data_noisy
 
 
 class NCFData(data.Dataset):

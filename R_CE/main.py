@@ -121,7 +121,7 @@ print("config model path", model_path)
 
 ############################## PREPARE DATASET ##########################
 
-train_data, valid_data, test_data_pos, user_pos, user_num, item_num, train_mat, train_data_noisy = data_utils.load_all(
+train_data, valid_data, test_data_pos, test_data_noisy, user_pos, user_num, item_num, train_mat, train_data_noisy = data_utils.load_all(
     args.dataset, data_path)
 
 # construct the train and test datasets
@@ -219,7 +219,9 @@ train_loader.dataset.ng_sample()
 valid_loader.dataset.ng_sample()
 if args.use_VAE:
     # pretrain model
-    print("pretrain model...")
+    count = 0
+    test(model, test_data_pos, user_pos)
+    print("Baseline: pretrain model...")
     for epoch in range(args.pretrain_epochs):
         model.train()
         for user, item, label, noisy_or_not in train_loader:
@@ -228,7 +230,8 @@ if args.use_VAE:
             label = label.float().to(args.device)
             model.zero_grad()
             prediction = model(user, item)
-            loss = F.binary_cross_entropy(prediction, label)
+            # loss = F.binary_cross_entropy(prediction, label)
+            loss = loss_function(prediction, label, args.alpha)
 
             for _ in range(args.num_ng):
                 neg_item = []
@@ -239,12 +242,24 @@ if args.use_VAE:
                     neg_item.append(j)
                 neg_item = torch.tensor(neg_item).to(args.device)
                 neg_prediction = model(user, neg_item)
-                loss += F.binary_cross_entropy(neg_prediction, torch.zeros_like(label))
-
+                # loss += F.binary_cross_entropy(neg_prediction, torch.zeros_like(label))
+                loss += loss_function(prediction, label, args.alpha)
             loss.backward()
             optimizer.step()
+            if count % 200 == 0 and count != 0:
+                print("epoch: {}, iter: {}, loss:{}".format(epoch, count, loss))
+
+            if count % args.eval_freq == 0 and count != 0:
+                test(model, test_data_pos, user_pos)
+                best_loss = eval(model, valid_loader, best_loss, count)
+                model.train()
+            count += 1
     best_loss = eval(model, valid_loader, best_loss, count)
+    print("Noisy Test:")
+    test(model, test_data_noisy, user_pos)
+    print("Clean Test:")
     test(model, test_data_pos, user_pos)
+
 
 
 for epoch in range(args.epochs):
@@ -311,4 +326,8 @@ for epoch in range(args.epochs):
 print("############################## Training End. ##############################")
 # test_model = torch.load('{}{}_{}.pth'.format(model_path, args.model, args.alpha))
 # test_model.to(args.device)
+print("Clean Test:")
 test(model, test_data_pos, user_pos)
+
+print("Noisy Test:")
+test(model, test_data_noisy, user_pos)
