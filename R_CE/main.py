@@ -236,15 +236,13 @@ for epoch in range(args.epochs):
         label = label.float().to(args.device)
         model.zero_grad()
         prediction = model(user, item)
-
         if args.use_VAE == True:
-            loss_1 = torch.log(Gamma_1(user, item)) * (1 - prediction)
+            loss_1 = torch.log(Gamma_1(user, item) + CONSTANT) * (1 - prediction)
             p = Gamma_2(user, item)
             loss_2 = p * torch.log(CONSTANT + p) - p * torch.log(CONSTANT + prediction) \
                      + (1 - p) * torch.log(CONSTANT + 1 - p) - (1 - p) * torch.log(CONSTANT + 1 - prediction)
             # loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
             #          + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(CONSTANT + 1 - p)
-            # loss_2 = 0
             loss = loss_2 - loss_1
             for _ in range(args.num_ng):
                 neg_item = []
@@ -255,8 +253,7 @@ for epoch in range(args.epochs):
                     neg_item.append(j)
                 neg_item = torch.tensor(neg_item).to(args.device)
                 neg_prediction = model(user, neg_item)
-
-                neg_loss_1 = -torch.log(1 - Gamma_1(user, neg_item) * (1-neg_prediction + CONSTANT)) + neg_prediction * 1000
+                neg_loss_1 = -torch.log(1 - Gamma_1(user, neg_item)+ CONSTANT) * (1-neg_prediction) + neg_prediction * 1000
                 # neg_loss_2 = -torch.log(1 - neg_prediction + CONSTANT)
                 p = Gamma_2(user, neg_item)
                 neg_loss_2 = (p * torch.log(CONSTANT + p) - p * torch.log(CONSTANT + neg_prediction)
@@ -264,8 +261,8 @@ for epoch in range(args.epochs):
                 # neg_loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
                 #          + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(
                 #     CONSTANT + 1 - p)
+
                 loss += (neg_loss_1 + neg_loss_2)
-                # loss += neg_loss_1
 
             loss = torch.mean(loss)
 
