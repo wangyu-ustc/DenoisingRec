@@ -54,7 +54,7 @@ parser.add_argument("--epochs",
                     help="training epoches")
 parser.add_argument("--pretrain_epochs",
                     type=int,
-                    default=0,
+                    default=1,
                     help="pretrain the model")
 parser.add_argument("--eval_freq",
                     type=int,
@@ -108,8 +108,12 @@ parser.add_argument("--lambda_2",
                     help='regularization')
 parser.add_argument("--prior",
                     type=str,
-                    default='MF',
+                    default='pretrain',
                     help='priors used for experiments, options: MF, pretrain')
+parser.add_argument("--training_method",
+                    type=str,
+                    default='iterative',
+                    help="training routine, options: normal, iterative")
 args = parser.parse_args()
 cudnn.benchmark = True
 
@@ -276,86 +280,159 @@ for epoch in range(args.epochs):
     model.train()  # Enable dropout (if have).
 
     start_time = time.time()
-    for user, item, label, noisy_or_not in train_loader:
-        user = user.to(args.device)
-        item = item.to(args.device)
-        label = label.float().to(args.device)
-        model.zero_grad()
-        prediction = model(user, item)
-        if args.use_VAE == True:
-            loss_1 = torch.log(Gamma_1(user, item) + CONSTANT) * (1 - prediction)
-            if args.prior == 'pretrain':
-                p = Gamma_2(user, item).detach()
-            else:
-                p = Gamma_2(user, item)
-            # loss_2 = p * torch.log(CONSTANT + p) - p * torch.log(CONSTANT + prediction) \
-            #          + (1 - p) * torch.log(CONSTANT + 1 - p) - (1 - p) * torch.log(CONSTANT + 1 - prediction)
-            loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
-                     + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(CONSTANT + 1 - p)
-            loss = loss_2 - loss_1
-            for _ in range(args.num_ng):
-                neg_item = []
-                for single_user in user:
-                    j = np.random.randint(item_num)
-                    while (single_user, j) in train_mat:
-                        j = np.random.randint(item_num)
-                    neg_item.append(j)
-                neg_item = torch.tensor(neg_item).to(args.device)
-                neg_prediction = model(user, neg_item)
-                neg_loss_1 = -torch.log(1 - Gamma_1(user, neg_item)+ CONSTANT) * (1-neg_prediction) + neg_prediction * 1000
-                # neg_loss_2 = -torch.log(1 - neg_prediction + CONSTANT)
+
+    if args.training_method == 'normal':
+        for user, item, label, noisy_or_not in train_loader:
+            user = user.to(args.device)
+            item = item.to(args.device)
+            label = label.float().to(args.device)
+            model.zero_grad()
+            prediction = model(user, item)
+            if args.use_VAE == True:
+                loss_1 = torch.log(Gamma_1(user, item) + CONSTANT) * (1 - prediction)
                 if args.prior == 'pretrain':
                     p = Gamma_2(user, item).detach()
                 else:
                     p = Gamma_2(user, item)
-                # neg_loss_2 = (p * torch.log(CONSTANT + p) - p * torch.log(CONSTANT + neg_prediction)
-                # + (1 - p) * torch.log(CONSTANT + 1 - p) - (1 - p) * torch.log(CONSTANT + 1 - neg_prediction))
-                neg_loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
-                         + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(
-                    CONSTANT + 1 - p)
-
-                loss += (neg_loss_1 + neg_loss_2)
-
-            loss = torch.mean(loss)
-
-            # loss += args.lambda_1 * torch.norm(Gamma_1.user_embedding.weight) + torch.norm(Gamma_1.item_embedding.weight)
-            # loss += args.lambda_2 * torch.norm(Gamma_2.user_embedding.weight) + torch.norm(Gamma_2.item_embedding.weight)
-
-            model.zero_grad()
-            gamma_1_optim.zero_grad()
-            gamma_2_optim.zero_grad()
-
-            loss.backward()
-
-            optimizer.step()
-            gamma_1_optim.step()
-            gamma_2_optim.step()
-
-        else:
-            loss = F.binary_cross_entropy(prediction, label)
-            # loss = loss_function(prediction, label, args.alpha)
-            for _ in range(args.num_ng):
-                neg_item = []
-                for single_user in user:
-                    j = np.random.randint(item_num)
-                    while (single_user, j) in train_mat:
+                # loss_2 = p * torch.log(CONSTANT + p) - p * torch.log(CONSTANT + prediction) \
+                #          + (1 - p) * torch.log(CONSTANT + 1 - p) - (1 - p) * torch.log(CONSTANT + 1 - prediction)
+                loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
+                         + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(CONSTANT + 1 - p)
+                loss = loss_2 - loss_1
+                for _ in range(args.num_ng):
+                    neg_item = []
+                    for single_user in user:
                         j = np.random.randint(item_num)
-                    neg_item.append(j)
-                neg_item = torch.tensor(neg_item).to(args.device)
-                neg_prediction = model(user, neg_item)
-                loss += F.binary_cross_entropy(neg_prediction, torch.zeros_like(label))
-                # loss += loss_function(prediction, label, args.alpha)
-            loss.backward()
-            optimizer.step()
+                        while (single_user, j) in train_mat:
+                            j = np.random.randint(item_num)
+                        neg_item.append(j)
+                    neg_item = torch.tensor(neg_item).to(args.device)
+                    neg_prediction = model(user, neg_item)
+                    neg_loss_1 = -torch.log(1 - Gamma_1(user, neg_item)+ CONSTANT) * (1-neg_prediction) + neg_prediction * 1000
+                    # neg_loss_2 = -torch.log(1 - neg_prediction + CONSTANT)
+                    if args.prior == 'pretrain':
+                        p = Gamma_2(user, item).detach()
+                    else:
+                        p = Gamma_2(user, item)
+                    # neg_loss_2 = (p * torch.log(CONSTANT + p) - p * torch.log(CONSTANT + neg_prediction)
+                    # + (1 - p) * torch.log(CONSTANT + 1 - p) - (1 - p) * torch.log(CONSTANT + 1 - neg_prediction))
+                    neg_loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
+                             + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(
+                        CONSTANT + 1 - p)
 
-        if count % 200 == 0 and count != 0:
-            print("epoch: {}, iter: {}, loss:{}".format(epoch, count, loss))
+                    loss += (neg_loss_1 + neg_loss_2)
 
-        if count % args.eval_freq == 0 and count != 0:
-            test(model, test_data_pos, user_pos)
-            best_loss = eval(model, valid_loader, best_loss, count)
-            model.train()
-        count += 1
+                loss = torch.mean(loss)
+
+                # loss += args.lambda_1 * torch.norm(Gamma_1.user_embedding.weight) + torch.norm(Gamma_1.item_embedding.weight)
+                # loss += args.lambda_2 * torch.norm(Gamma_2.user_embedding.weight) + torch.norm(Gamma_2.item_embedding.weight)
+
+                model.zero_grad()
+                gamma_1_optim.zero_grad()
+                gamma_2_optim.zero_grad()
+
+                loss.backward()
+
+                optimizer.step()
+                gamma_1_optim.step()
+                gamma_2_optim.step()
+
+            else:
+                loss = F.binary_cross_entropy(prediction, label)
+                # loss = loss_function(prediction, label, args.alpha)
+                for _ in range(args.num_ng):
+                    neg_item = []
+                    for single_user in user:
+                        j = np.random.randint(item_num)
+                        while (single_user, j) in train_mat:
+                            j = np.random.randint(item_num)
+                        neg_item.append(j)
+                    neg_item = torch.tensor(neg_item).to(args.device)
+                    neg_prediction = model(user, neg_item)
+                    loss += F.binary_cross_entropy(neg_prediction, torch.zeros_like(label))
+                    # loss += loss_function(prediction, label, args.alpha)
+                loss.backward()
+                optimizer.step()
+
+            if count % 200 == 0 and count != 0:
+                print("epoch: {}, iter: {}, loss:{}".format(epoch, count, loss))
+
+            if count % args.eval_freq == 0 and count != 0:
+                test(model, test_data_pos, user_pos)
+                best_loss = eval(model, valid_loader, best_loss, count)
+                model.train()
+
+            count += 1
+    else:
+        assert args.use_VAE == True
+        assert args.training_method == 'iterative'
+        assert args.prior == 'pretrain'
+        iterative_step = 1
+        for user, item, label, noisy_or_not in train_loader:
+            user = user.to(args.device)
+            item = item.to(args.device)
+            label = label.float().to(args.device)
+            # model.zero_grad()
+            prediction = model(user, item)
+            if count % (iterative_step+1) == 0:
+                # train the decoder, P(\tilde{R}|R), or Gamma_{ui} in the paper
+                prediction = prediction.detach()
+                loss_1 = torch.log(Gamma_1(user, item) + CONSTANT) * (1 - prediction)
+                loss = -loss_1
+                for _ in range(args.num_ng):
+                    neg_item = []
+                    for single_user in user:
+                        j = np.random.randint(item_num)
+                        while (single_user, j) in train_mat:
+                            j = np.random.randint(item_num)
+                        neg_item.append(j)
+                    neg_item = torch.tensor(neg_item).to(args.device)
+                    neg_prediction = model(user, neg_item).detach()
+                    neg_loss_1 = -torch.log(1 - Gamma_1(user, neg_item) + CONSTANT) * (
+                                1 - neg_prediction)
+                    loss += neg_loss_1
+                    loss = torch.mean(loss)
+                    gamma_1_optim.zero_grad()
+                    loss.backward()
+                    gamma_1_optim.step()
+            else:
+                # train the encoder, Q(R) in the paper
+                p = Gamma_2(user, item).detach()
+
+                loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
+                         + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(CONSTANT + 1 - p)
+                loss = loss_2
+
+                for _ in range(args.num_ng):
+                    neg_item = []
+                    for single_user in user:
+                        j = np.random.randint(item_num)
+                        while (single_user, j) in train_mat:
+                            j = np.random.randint(item_num)
+                        neg_item.append(j)
+                    neg_item = torch.tensor(neg_item).to(args.device)
+                    neg_prediction = model(user, neg_item)
+
+                    neg_loss_1 = neg_prediction * 1000
+                    neg_loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
+                                 + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (
+                                             1 - prediction) * torch.log(CONSTANT + 1 - p)
+
+                    loss += (neg_loss_1 + neg_loss_2)
+                    loss = torch.mean(loss)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+            count += 1
+
+            if count % 200 == 0 and count != 0:
+                print("epoch: {}, iter: {}, loss:{}".format(epoch, count, loss))
+
+            if count % args.eval_freq == 0 and count != 0:
+                test(model, test_data_pos, user_pos)
+                best_loss = eval(model, valid_loader, best_loss, count)
+                model.train()
+
 
 print("############################## Training End. ##############################")
 # test_model = torch.load('{}{}_{}.pth'.format(model_path, args.model, args.alpha))
