@@ -98,6 +98,14 @@ parser.add_argument("--use_VAE",
                     type=int,
                     default=True,
                     help='whether to use VAE-based training')
+parser.add_argument("--lambda_1",
+                    type=float,
+                    default=0.01,
+                    help='regularization')
+parser.add_argument("--lambda_2",
+                    type=float,
+                    default=0.01,
+                    help='regularization')
 args = parser.parse_args()
 cudnn.benchmark = True
 
@@ -215,51 +223,7 @@ gamma_1_optim = optim.Adam(Gamma_1.parameters(), lr=args.lr)
 gamma_2_optim = optim.Adam(Gamma_2.parameters(), lr=args.lr)
 
 
-train_loader.dataset.ng_sample()
-valid_loader.dataset.ng_sample()
-if args.use_VAE:
-    # pretrain model
-    count = 0
-    test(model, test_data_pos, user_pos)
-    print("Baseline: pretrain model...")
-    for epoch in range(args.pretrain_epochs):
-        model.train()
-        for user, item, label, noisy_or_not in train_loader:
-            user = user.to(args.device)
-            item = item.to(args.device)
-            label = label.float().to(args.device)
-            model.zero_grad()
-            prediction = model(user, item)
-            # loss = F.binary_cross_entropy(prediction, label)
-            loss = loss_function(prediction, label, args.alpha)
-
-            for _ in range(args.num_ng):
-                neg_item = []
-                for single_user in user:
-                    j = np.random.randint(item_num)
-                    while (single_user, j) in train_mat:
-                        j = np.random.randint(item_num)
-                    neg_item.append(j)
-                neg_item = torch.tensor(neg_item).to(args.device)
-                neg_prediction = model(user, neg_item)
-                # loss += F.binary_cross_entropy(neg_prediction, torch.zeros_like(label))
-                loss += loss_function(prediction, label, args.alpha)
-            loss.backward()
-            optimizer.step()
-            if count % 200 == 0 and count != 0:
-                print("epoch: {}, iter: {}, loss:{}".format(epoch, count, loss))
-
-            if count % args.eval_freq == 0 and count != 0:
-                test(model, test_data_pos, user_pos)
-                best_loss = eval(model, valid_loader, best_loss, count)
-                model.train()
-            count += 1
-    best_loss = eval(model, valid_loader, best_loss, count)
-    print("Noisy Test:")
-    test(model, test_data_noisy, user_pos)
-    print("Clean Test:")
-    test(model, test_data_pos, user_pos)
-
+train_loader.dataset.ng_sample() # 形式化处理，不会真的去获取netative sample
 
 
 for epoch in range(args.epochs):
@@ -278,6 +242,9 @@ for epoch in range(args.epochs):
             p = Gamma_2(user, item)
             loss_2 = p * torch.log(CONSTANT + p) - p * torch.log(CONSTANT + prediction) \
                      + (1 - p) * torch.log(CONSTANT + 1 - p) - (1 - p) * torch.log(CONSTANT + 1 - prediction)
+            # loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
+            #          + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(CONSTANT + 1 - p)
+            # loss_2 = 0
             loss = loss_2 - loss_1
             for _ in range(args.num_ng):
                 neg_item = []
@@ -294,9 +261,16 @@ for epoch in range(args.epochs):
                 p = Gamma_2(user, neg_item)
                 neg_loss_2 = (p * torch.log(CONSTANT + p) - p * torch.log(CONSTANT + neg_prediction)
                 + (1 - p) * torch.log(CONSTANT + 1 - p) - (1 - p) * torch.log(CONSTANT + 1 - neg_prediction))
+                # neg_loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
+                #          + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(
+                #     CONSTANT + 1 - p)
                 loss += (neg_loss_1 + neg_loss_2)
+                # loss += neg_loss_1
 
             loss = torch.mean(loss)
+
+            # loss += args.lambda_1 * torch.norm(Gamma_1.user_embedding.weight) + torch.norm(Gamma_1.item_embedding.weight)
+            # loss += args.lambda_2 * torch.norm(Gamma_2.user_embedding.weight) + torch.norm(Gamma_2.item_embedding.weight)
 
             model.zero_grad()
             gamma_1_optim.zero_grad()
@@ -309,8 +283,19 @@ for epoch in range(args.epochs):
             gamma_2_optim.step()
 
         else:
-            # loss = F.binary_cross_entropy_with_logits(prediction, label)
-            loss = loss_function(prediction, label, args.alpha)
+            loss = F.binary_cross_entropy(prediction, label)
+            # loss = loss_function(prediction, label, args.alpha)
+            for _ in range(args.num_ng):
+                neg_item = []
+                for single_user in user:
+                    j = np.random.randint(item_num)
+                    while (single_user, j) in train_mat:
+                        j = np.random.randint(item_num)
+                    neg_item.append(j)
+                neg_item = torch.tensor(neg_item).to(args.device)
+                neg_prediction = model(user, neg_item)
+                loss += F.binary_cross_entropy(neg_prediction, torch.zeros_like(label))
+                # loss += loss_function(prediction, label, args.alpha)
             loss.backward()
             optimizer.step()
 
@@ -331,3 +316,29 @@ test(model, test_data_pos, user_pos)
 
 print("Noisy Test:")
 test(model, test_data_noisy, user_pos)
+
+if args.use_VAE:
+    torch.save(Gamma_1, '{}{}.pth'.format(model_path, "Gamma_1"))
+    torch.save(Gamma_2, '{}{}.pth'.format(model_path, "Gamma_2"))
+
+    Gamma = -np.ones([100, 100])
+    Gamma_backward = -np.ones([100, 100])
+    Gamma_1.to("cpu")
+    Gamma_2.to("cpu")
+    for u in range(100):
+        for i in range(100):
+            if (u,i) in train_mat:
+                Gamma[u,i] = Gamma_1(torch.tensor(u).unsqueeze(0),torch.tensor(i).unsqueeze(0))
+                Gamma_backward[u,i] = Gamma_2(torch.tensor(u).unsqueeze(0),torch.tensor(i).unsqueeze(0))
+
+    print("Gamma")
+    print(Gamma.round(decimals=4))
+    print("Gamma_backward")
+    print(Gamma_backward.round(decimals=4))
+    import pandas as pd
+    pd.DataFrame(Gamma.round(decimals=4)).to_csv("C:/Users/ls/Desktop/Gamma_1.csv",header=False, index=False, sep=',')
+    pd.DataFrame(Gamma_backward.round(decimals=4)).to_csv("C:/Users/ls/Desktop/Gamma_2.csv",header=False, index=False, sep=',')
+
+
+
+
