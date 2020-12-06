@@ -311,13 +311,13 @@ for epoch in range(args.epochs):
                     neg_loss_1 = -torch.log(1 - Gamma_1(user, neg_item)+ CONSTANT) * (1-neg_prediction) + neg_prediction * 1000
                     # neg_loss_2 = -torch.log(1 - neg_prediction + CONSTANT)
                     if args.prior == 'pretrain':
-                        p = Gamma_2(user, item).detach()
+                        p = Gamma_2(user, neg_item).detach()
                     else:
-                        p = Gamma_2(user, item)
+                        p = Gamma_2(user, neg_item)
                     # neg_loss_2 = (p * torch.log(CONSTANT + p) - p * torch.log(CONSTANT + neg_prediction)
                     # + (1 - p) * torch.log(CONSTANT + 1 - p) - (1 - p) * torch.log(CONSTANT + 1 - neg_prediction))
-                    neg_loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
-                             + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(
+                    neg_loss_2 = neg_prediction * torch.log(CONSTANT + neg_prediction) - neg_prediction * torch.log(CONSTANT + p) \
+                             + (1 - neg_prediction) * torch.log(CONSTANT + 1 - neg_prediction) - (1 - neg_prediction) * torch.log(
                         CONSTANT + 1 - p)
 
                     loss += (neg_loss_1 + neg_loss_2)
@@ -374,55 +374,50 @@ for epoch in range(args.epochs):
             label = label.float().to(args.device)
             # model.zero_grad()
             prediction = model(user, item)
-            if count % (iterative_step+1) == 0:
+
+            if count % (iterative_step + 1) == 0:
                 # train the decoder, P(\tilde{R}|R), or Gamma_{ui} in the paper
                 prediction = prediction.detach()
-                loss_1 = torch.log(Gamma_1(user, item) + CONSTANT) * (1 - prediction)
-                loss = -loss_1
-                for _ in range(args.num_ng):
-                    neg_item = []
-                    for single_user in user:
-                        j = np.random.randint(item_num)
-                        while (single_user, j) in train_mat:
-                            j = np.random.randint(item_num)
-                        neg_item.append(j)
-                    neg_item = torch.tensor(neg_item).to(args.device)
-                    neg_prediction = model(user, neg_item).detach()
-                    neg_loss_1 = -torch.log(1 - Gamma_1(user, neg_item) + CONSTANT) * (
-                                1 - neg_prediction)
-                    loss += neg_loss_1
-                    loss = torch.mean(loss)
-                    gamma_1_optim.zero_grad()
-                    loss.backward()
-                    gamma_1_optim.step()
+                process = lambda x: x
             else:
-                # train the encoder, Q(R) in the paper
-                p = Gamma_2(user, item).detach()
+                process = lambda x: x.detach()
+            loss_1 = torch.log(process(Gamma_1(user, item)) + CONSTANT) * (1 - prediction)
 
-                loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
-                         + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(CONSTANT + 1 - p)
-                loss = loss_2
-
-                for _ in range(args.num_ng):
-                    neg_item = []
-                    for single_user in user:
+            p = Gamma_2(user, item).detach()
+            loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
+                     + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(
+                CONSTANT + 1 - p)
+            loss = loss_2 - loss_1
+            for _ in range(args.num_ng):
+                neg_item = []
+                for single_user in user:
+                    j = np.random.randint(item_num)
+                    while (single_user, j) in train_mat:
                         j = np.random.randint(item_num)
-                        while (single_user, j) in train_mat:
-                            j = np.random.randint(item_num)
-                        neg_item.append(j)
-                    neg_item = torch.tensor(neg_item).to(args.device)
-                    neg_prediction = model(user, neg_item)
+                    neg_item.append(j)
+                neg_item = torch.tensor(neg_item).to(args.device)
+                neg_prediction = model(user, neg_item)
+                neg_loss_1 = -torch.log(1 - process(Gamma_1(user, neg_item)) + CONSTANT) * (1 - neg_prediction) + \
+                                 neg_prediction * 1000
+                # neg_loss_2 = -torch.log(1 - neg_prediction + CONSTANT)
+                p = Gamma_2(user, neg_item).detach()
+                neg_loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
+                             + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (1 - prediction) * torch.log(
+                    CONSTANT + 1 - p)
 
-                    neg_loss_1 = neg_prediction * 1000
-                    neg_loss_2 = prediction * torch.log(CONSTANT + prediction) - prediction * torch.log(CONSTANT + p) \
-                                 + (1 - prediction) * torch.log(CONSTANT + 1 - prediction) - (
-                                             1 - prediction) * torch.log(CONSTANT + 1 - p)
+                loss += (neg_loss_1 + neg_loss_2)
 
-                    loss += (neg_loss_1 + neg_loss_2)
-                    loss = torch.mean(loss)
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
+            loss = torch.mean(loss)
+            model.zero_grad()
+            gamma_1_optim.zero_grad()
+            gamma_2_optim.zero_grad()
+
+            loss.backward()
+
+            optimizer.step()
+            gamma_1_optim.step()
+            gamma_2_optim.step()
+
             count += 1
 
             if count % 200 == 0 and count != 0:
